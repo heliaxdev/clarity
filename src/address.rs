@@ -1,20 +1,15 @@
 use crate::utils::bytes_to_hex_str;
-use crate::utils::display_uint256_as_address;
 use crate::utils::hex_str_to_bytes;
 use crate::Error;
-use crate::Uint256;
 
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
 use sha3::{Digest, Keccak256};
+use std::fmt::{self, Display};
 use std::str;
 use std::str::FromStr;
-use std::{
-    convert::TryFrom,
-    fmt::{self, Display},
-};
 
 /// Representation of an Ethereum address.
 ///
@@ -231,186 +226,182 @@ impl fmt::Debug for Address {
     }
 }
 
-impl TryFrom<Uint256> for Address {
-    type Error = Error;
+#[cfg(test)]
+mod test_address {
+    use super::*;
 
-    fn try_from(value: Uint256) -> Result<Self, Self::Error> {
-        let string = display_uint256_as_address(value);
-        string.parse()
+    #[test]
+    #[should_panic]
+    fn decode_invalid_length() {
+        "123".parse::<Address>().unwrap();
     }
-}
 
-#[test]
-#[should_panic]
-fn decode_invalid_length() {
-    "123".parse::<Address>().unwrap();
-}
+    #[test]
+    #[should_panic]
+    fn decode_invalid_character() {
+        "\u{012345}123456789012345678901234567890123456"
+            .parse::<Address>()
+            .unwrap();
+    }
 
-#[test]
-#[should_panic]
-fn decode_invalid_character() {
-    "\u{012345}123456789012345678901234567890123456"
-        .parse::<Address>()
-        .unwrap();
-}
+    #[test]
+    fn decode() {
+        let address: Address = "1234567890123456789012345678901234567890"
+            .parse::<Address>()
+            .unwrap();
 
-#[test]
-fn decode() {
-    let address: Address = "1234567890123456789012345678901234567890"
-        .parse::<Address>()
-        .unwrap();
-
-    assert_eq!(
-        address,
-        Address::from([
-            0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56, 0x78,
-            0x90, 0x12, 0x34, 0x56, 0x78, 0x90
-        ])
-    );
-}
-
-#[test]
-fn serialize_null_address() {
-    let address = Address::default();
-    let s = serde_json::to_string(&address).unwrap();
-    assert_eq!(s, r#""0x0000000000000000000000000000000000000000""#);
-    let recovered_addr: Address = serde_json::from_str(&s).unwrap();
-    assert_eq!(address, recovered_addr);
-}
-
-#[test]
-fn serialize_padded_address() {
-    let raw_address = "00000000000000000000000000000000000000C0";
-    let address: Address = raw_address.parse().unwrap();
-    assert_eq!(
-        serde_json::to_string(&address).unwrap(),
-        format!(r#""0x{}""#, raw_address)
-    );
-}
-
-#[test]
-#[should_panic]
-fn address_less_than_20_filler() {
-    // Data found in AddressLessThan20Filler.json
-    let _address: Address = "0b9331677e6ebf".parse().unwrap();
-}
-
-#[test]
-fn handle_prefixed() {
-    let address: Address = "0x000000000000000000000000000b9331677e6ebf"
-        .parse()
-        .unwrap();
-    assert_eq!(
-        address,
-        Address::from([
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0b, 0x93, 0x31, 0x67, 0x7e, 0x6e, 0xbf
-        ])
-    );
-}
-
-#[test]
-fn hashed() {
-    // One of the use cases for Address could be a key in a HashMap to store some
-    // additional values per address.
-    use std::collections::HashMap;
-    let a = Address::from_str("0x000000000000000000000000000b9331677e6ebf").unwrap();
-    let b = Address::from_str("0x00000000000000000000000000000000deadbeef").unwrap();
-    let mut map = HashMap::new();
-    map.insert(a, "Foo");
-    map.insert(b, "Bar");
-
-    assert_eq!(&map[&a], &"Foo");
-    assert_eq!(&map[&b], &"Bar");
-}
-
-#[test]
-fn ordered() {
-    let a = Address::from_str("0x000000000000000000000000000000000000000a").unwrap();
-    let b = Address::from_str("0x000000000000000000000000000000000000000b").unwrap();
-    let c = Address::from_str("0x000000000000000000000000000000000000000c").unwrap();
-    assert!(c > b);
-    assert!(b > a);
-    assert!(b < c);
-    assert!(a < c);
-    assert_ne!(a, b);
-    assert_ne!(b, c);
-    assert_ne!(a, c);
-}
-
-#[test]
-fn to_hex() {
-    let address: Address = "1234567890123456789ABCDEF678901234567890"
-        .parse::<Address>()
-        .unwrap();
-
-    assert_eq!(
-        format!("{:x}", address),
-        "1234567890123456789abcdef678901234567890",
-    );
-    assert_eq!(
-        format!("{:#x}", address),
-        "0x1234567890123456789abcdef678901234567890",
-    );
-    assert_eq!(
-        format!("{:#X}", address),
-        "0x1234567890123456789ABCDEF678901234567890",
-    );
-}
-
-#[test]
-fn eip_55_validate() {
-    // testcases taken from here https://eips.ethereum.org/EIPS/eip-55
-    let eip_55_testcases = [
-        "0x52908400098527886E0F7030069857D2E4169EE7",
-        "0x8617E340B3D01FA5F11F306F4090FD50E238070D",
-        "0xde709f2102306220921060314715629080e2fb77",
-        "0x27b1fdb04752bbc536007a920d24acb045561c26",
-        "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
-        "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
-        "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB",
-        "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb",
-    ];
-    let eip_55_invalid = [
-        "0x52908400098527886E0F7030069857D2E4169eE7",
-        "0x8617E340b3D01FA5F11F306F4090FD50E238070D",
-        "0xde709f2102306220921060314715629080e2fB77",
-        "0x27b1fDb04752bbc536007a920d24acb045561c26",
-        "0x5aaeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
-        "0xFB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
-        "0xdbF03B407c01e7cD3CBea99509d93f8DDDC8C6FB",
-        "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDB",
-    ];
-    for starting_address in eip_55_testcases.iter() {
-        let unvalidated: Address = starting_address.parse().unwrap();
-        let failure_message = format!(
-            "Failed to validate address theirs: {} ours: {} !",
-            starting_address, unvalidated
+        assert_eq!(
+            address,
+            Address::from([
+                0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56, 0x78, 0x90, 0x12, 0x34, 0x56, 0x78,
+                0x90, 0x12, 0x34, 0x56, 0x78, 0x90
+            ])
         );
-        let _address: Address =
-            Address::parse_and_validate(starting_address).expect(&failure_message);
     }
-    for starting_address in eip_55_invalid.iter() {
-        Address::parse_and_validate(starting_address).unwrap_err();
-    }
-}
 
-#[test]
-fn eip_55_display() {
-    // testcases taken from here https://eips.ethereum.org/EIPS/eip-55
-    let eip_55_testcases = [
-        "0x52908400098527886E0F7030069857D2E4169EE7",
-        "0x8617E340B3D01FA5F11F306F4090FD50E238070D",
-        "0xde709f2102306220921060314715629080e2fb77",
-        "0x27b1fdb04752bbc536007a920d24acb045561c26",
-        "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
-        "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
-        "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB",
-        "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb",
-    ];
-    for starting_address in eip_55_testcases.iter() {
-        // this also checks that parse still functions properly with
-        // eip invalid but otherwise correct addresses
-        let unvalidated: Address = starting_address.parse().unwrap();
-        assert_eq!(format!("{}", unvalidated), **starting_address)
+    #[test]
+    fn serialize_null_address() {
+        let address = Address::default();
+        let s = serde_json::to_string(&address).unwrap();
+        assert_eq!(s, r#""0x0000000000000000000000000000000000000000""#);
+        let recovered_addr: Address = serde_json::from_str(&s).unwrap();
+        assert_eq!(address, recovered_addr);
+    }
+
+    #[test]
+    fn serialize_padded_address() {
+        let raw_address = "00000000000000000000000000000000000000C0";
+        let address: Address = raw_address.parse().unwrap();
+        assert_eq!(
+            serde_json::to_string(&address).unwrap(),
+            format!(r#""0x{}""#, raw_address)
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn address_less_than_20_filler() {
+        // Data found in AddressLessThan20Filler.json
+        let _address: Address = "0b9331677e6ebf".parse().unwrap();
+    }
+
+    #[test]
+    fn handle_prefixed() {
+        let address: Address = "0x000000000000000000000000000b9331677e6ebf"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            address,
+            Address::from([
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0b, 0x93, 0x31, 0x67, 0x7e, 0x6e, 0xbf
+            ])
+        );
+    }
+
+    #[test]
+    fn hashed() {
+        // One of the use cases for Address could be a key in a HashMap to store some
+        // additional values per address.
+        use std::collections::HashMap;
+        let a = Address::from_str("0x000000000000000000000000000b9331677e6ebf").unwrap();
+        let b = Address::from_str("0x00000000000000000000000000000000deadbeef").unwrap();
+        let mut map = HashMap::new();
+        map.insert(a, "Foo");
+        map.insert(b, "Bar");
+
+        assert_eq!(&map[&a], &"Foo");
+        assert_eq!(&map[&b], &"Bar");
+    }
+
+    #[test]
+    fn ordered() {
+        let a = Address::from_str("0x000000000000000000000000000000000000000a").unwrap();
+        let b = Address::from_str("0x000000000000000000000000000000000000000b").unwrap();
+        let c = Address::from_str("0x000000000000000000000000000000000000000c").unwrap();
+        assert!(c > b);
+        assert!(b > a);
+        assert!(b < c);
+        assert!(a < c);
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn to_hex() {
+        let address: Address = "1234567890123456789ABCDEF678901234567890"
+            .parse::<Address>()
+            .unwrap();
+
+        assert_eq!(
+            format!("{:x}", address),
+            "1234567890123456789abcdef678901234567890",
+        );
+        assert_eq!(
+            format!("{:#x}", address),
+            "0x1234567890123456789abcdef678901234567890",
+        );
+        assert_eq!(
+            format!("{:#X}", address),
+            "0x1234567890123456789ABCDEF678901234567890",
+        );
+    }
+
+    #[test]
+    fn eip_55_validate() {
+        // testcases taken from here https://eips.ethereum.org/EIPS/eip-55
+        let eip_55_testcases = [
+            "0x52908400098527886E0F7030069857D2E4169EE7",
+            "0x8617E340B3D01FA5F11F306F4090FD50E238070D",
+            "0xde709f2102306220921060314715629080e2fb77",
+            "0x27b1fdb04752bbc536007a920d24acb045561c26",
+            "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+            "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+            "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB",
+            "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb",
+        ];
+        let eip_55_invalid = [
+            "0x52908400098527886E0F7030069857D2E4169eE7",
+            "0x8617E340b3D01FA5F11F306F4090FD50E238070D",
+            "0xde709f2102306220921060314715629080e2fB77",
+            "0x27b1fDb04752bbc536007a920d24acb045561c26",
+            "0x5aaeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+            "0xFB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+            "0xdbF03B407c01e7cD3CBea99509d93f8DDDC8C6FB",
+            "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDB",
+        ];
+        for starting_address in eip_55_testcases.iter() {
+            let unvalidated: Address = starting_address.parse().unwrap();
+            let failure_message = format!(
+                "Failed to validate address theirs: {} ours: {} !",
+                starting_address, unvalidated
+            );
+            let _address: Address =
+                Address::parse_and_validate(starting_address).expect(&failure_message);
+        }
+        for starting_address in eip_55_invalid.iter() {
+            Address::parse_and_validate(starting_address).unwrap_err();
+        }
+    }
+
+    #[test]
+    fn eip_55_display() {
+        // testcases taken from here https://eips.ethereum.org/EIPS/eip-55
+        let eip_55_testcases = [
+            "0x52908400098527886E0F7030069857D2E4169EE7",
+            "0x8617E340B3D01FA5F11F306F4090FD50E238070D",
+            "0xde709f2102306220921060314715629080e2fb77",
+            "0x27b1fdb04752bbc536007a920d24acb045561c26",
+            "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+            "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+            "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB",
+            "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb",
+        ];
+        for starting_address in eip_55_testcases.iter() {
+            // this also checks that parse still functions properly with
+            // eip invalid but otherwise correct addresses
+            let unvalidated: Address = starting_address.parse().unwrap();
+            assert_eq!(format!("{}", unvalidated), **starting_address)
+        }
     }
 }
